@@ -45,12 +45,15 @@ jobs:
       - name: Normalize gradlew line endings and grant permission
         run: |
           python3 -c "p='gradlew'; d=open(p,'rb').read().replace(b'\r\n',b'\n').replace(b'\r',b'\n'); open(p,'wb').write(d)"
-          head -1 gradlew
           chmod +x gradlew
           bash -n gradlew && echo "gradlew syntax OK"
 
+      # 该项目的 gradlew 在 JAVA_HOME 存在时未给 JAVA_CMD 赋值（脚本缺陷），此处显式指定
       - name: Build Release APK
-        run: bash gradlew assembleRelease --no-daemon --stacktrace
+        run: |
+          export JAVA_CMD="$JAVA_HOME/bin/java"
+          "$JAVA_CMD" -version
+          bash gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
