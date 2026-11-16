@@ -55,6 +55,7 @@ import com.github.nrfr.ui.theme.clickableNoIndication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 private data class SlotFormDraft(
  val countryCode: String,
@@ -150,11 +151,14 @@ fun MainScreen(onShowAbout: () -> Unit) {
  LaunchedEffect(appContext, refreshTrigger) {
  isLoadingSimCards = true
  simCardsError = null
- runCatching {
- withContext(Dispatchers.IO) {
- CarrierConfigManager.getSimCards(appContext)
- }
- }.onSuccess {
+        runCatching {
+            // 终极保险：任何未知的 binder/shell 阻塞都不能让界面永久停在转圈。
+            withTimeout(12_000L) {
+                withContext(Dispatchers.IO) {
+                    CarrierConfigManager.getSimCards(appContext)
+                }
+            }
+        }.onSuccess {
  simCards = it
  if (it.isEmpty()) {
  simCardsError = "未检测到可用 SIM 卡，请确认 Shizuku 已授权"

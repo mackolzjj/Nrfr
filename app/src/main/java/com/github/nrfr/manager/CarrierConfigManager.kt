@@ -12,6 +12,8 @@ import com.github.nrfr.model.SimCardInfo
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.shizuku.Shizuku
 import java.io.InputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 object CarrierConfigManager {
     /**
@@ -32,18 +34,32 @@ object CarrierConfigManager {
     @Volatile
     private var orphanScrubDone = false
 
+    /**
+     * shell 通道熔断：新版 Shizuku 与编译时 API（13.1.5）的 newProcess 行为若不一致，
+     * 子进程可能挂起导致 waitFor() 永不返回。一旦超时就熔断之后的 shell 调用，
+     * 让首屏读取改用公开 API/隐藏 Binder 兜底，绝不因为一次卡死拖垮整个界面。
+     */
+    @Volatile
+    private var shellCircuitOpenUntil = 0L
+    private const val SHELL_TIMEOUT_MS = 6_000L
+    private const val SHELL_COOLDOWN_MS = 60_000L
+
     init {
         HiddenApiBypass.addHiddenApiExemptions("L")
         HiddenApiBypass.addHiddenApiExemptions("I")
     }
 
     fun getSimCards(context: Context): List<SimCardInfo> {
-        runCatching { rememberLiveOverrides(context, getCurrentConfigsByDumpsys()) }
-        runCatching { ensureClearedAfterReboot(context) }
-        runCatching { scrubOrphanBadges(context) }
-
+        // 首屏只做"读取"：回写（ensureClearedAfterReboot）与清残留角标（scrubOrphanBadges）
+        // 已改由 RebootResync 在后台线程调用，绝不在打开界面时同步执行，
+        // 否则清角标内的多次 sleep 重试 + shell 会直接卡住首屏加载。
+        //
+        // isub / carrier_config 各只 dump 一次并全程复用：原实现在一次 getSimCards 中
+        // 重复调用 getCurrentConfigsByDumpsys 三次，每次都是一个无超时的 shell 子进程。
         val isubSnapshot = getIsubSnapshotByDumpsys()
         val configsByPhoneId = getCurrentConfigsByDumpsys()
+        runCatching { rememberLiveOverrides(context, configsByPhoneId) }
+
         val simCards = mutableListOf<SimCardInfo>()
 
         for (slotIndex in 0..1) {
@@ -675,15 +691,45 @@ object CarrierConfigManager {
     }
 
     private fun runShellCommand(command: String): String {
+        // 熔断期内不再起 shell 子进程，直接失败，让调用方走兜底读取路径。
+        if (System.currentTimeMillis() < shellCircuitOpenUntil) {
+            throw IllegalStateException("shell 通道暂不可用（熔断冷却中）")
+        }
+
         val shellProcess = newShizukuProcess(arrayOf("sh", "-c", command))
         val stdout = StringBuilder()
         val stderr = StringBuilder()
         val stdoutThread = readAsync(shellProcess.inputStream, stdout)
         val stderrThread = readAsync(shellProcess.errorStream, stderr)
-        val exitCode = shellProcess.waitFor()
-        stdoutThread.join()
-        stderrThread.join()
 
+        // 关键修复：Shizuku 的 ShizukuRemoteProcess 未重写带超时的 waitFor(long, TimeUnit)，
+        // 直接调用会走基类轮询 exitValue()，远程进程卡住时无法可靠超时。
+        // 这里用独立守护线程执行阻塞式 waitFor()，主线程用 CountDownLatch 限时等待；
+        // 超时则 destroyForcibly()（会路由到 Shizuku 的 destroy）并熔断后续 shell 调用。
+        val done = CountDownLatch(1)
+        val waitThread = Thread({
+            try {
+                shellProcess.waitFor()
+            } catch (_: Throwable) {
+            } finally {
+                done.countDown()
+            }
+        }, "nrfr-shell-wait").apply { isDaemon = true }
+        waitThread.start()
+
+        val finished = done.await(SHELL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            runCatching { shellProcess.destroyForcibly() }
+            runCatching { stdoutThread.join(500) }
+            runCatching { stderrThread.join(500) }
+            shellCircuitOpenUntil = System.currentTimeMillis() + SHELL_COOLDOWN_MS
+            throw IllegalStateException("shell 命令超时，已终止子进程并熔断通道")
+        }
+
+        stdoutThread.join(1_000)
+        stderrThread.join(1_000)
+
+        val exitCode = shellProcess.exitValue()
         if (exitCode != 0) {
             throw IllegalStateException(
                 listOf(stdout.toString(), stderr.toString())

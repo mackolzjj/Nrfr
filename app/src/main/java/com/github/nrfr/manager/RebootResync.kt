@@ -39,6 +39,9 @@ object RebootResync {
             try {
                 val changed = CarrierConfigManager.ensureClearedAfterReboot(app)
                 Log.i(TAG, "resync finished, applied=$changed")
+                // 清残留角标同样包含多次同步 sleep 重试，必须从首屏读取路径移到后台线程，
+                // 避免打开 App 时界面一直卡在"正在读取 SIM"。
+                runCatching { CarrierConfigManager.scrubOrphanBadges(app) }
             } catch (t: Throwable) {
                 Log.w(TAG, "resync failed", t)
             } finally {
