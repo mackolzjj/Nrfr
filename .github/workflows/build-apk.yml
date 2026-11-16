@@ -22,11 +22,16 @@ jobs:
       - name: Use official Gradle distribution
         run: sed -i 's#distributionUrl=.*gradle-[0-9.]*-bin.zip#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.9-bin.zip#' gradle/wrapper/gradle-wrapper.properties
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
+      # ubuntu-latest 已预装 Android SDK，直接用预装的 sdkmanager 接受 license 并装 platform 36
       - name: Install Android SDK platform 36
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0"
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0"
 
       - name: Cache Gradle
         uses: actions/cache@v4
