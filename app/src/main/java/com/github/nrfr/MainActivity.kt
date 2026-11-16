@@ -9,8 +9,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.github.nrfr.manager.CarrierConfigManager
 import com.github.nrfr.manager.OperationState
+import com.github.nrfr.manager.RebootResync
 import com.github.nrfr.manager.ShizukuHelper
 import com.github.nrfr.ui.screens.AboutScreen
 import com.github.nrfr.ui.screens.MainScreen
@@ -117,19 +117,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Shizuku 连上后：若本开机尚未清理，则清成无覆盖默认状态。 */
+    /** Shizuku 连上后：若本开机尚未回写，则重新应用已保存的覆盖。统一交给 RebootResync 去重。 */
     private fun triggerSyncWhenShizukuReady() {
         if (!ShizukuHelper.hasPermission() || syncTriggered) {
             return
         }
         syncTriggered = true
-        Thread({
-            runCatching {
-                CarrierConfigManager.ensureClearedAfterReboot(applicationContext)
-            }.onFailure {
-                syncTriggered = false
-            }
-        }, "NrfrBootClear").start()
+        RebootResync.triggerResyncNow(applicationContext)
     }
 
     override fun onDestroy() {

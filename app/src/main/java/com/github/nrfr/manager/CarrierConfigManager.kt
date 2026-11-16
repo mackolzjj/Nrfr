@@ -85,7 +85,11 @@ object CarrierConfigManager {
         if (bootCount == lastCleared) {
             return false
         }
-        reapplySavedOverrides(context, prefs)
+        // 只有真正回写成功才标记本开机周期已处理；失败则保留，等下一次
+        // sticky 监听 / 闹钟再触发时重试。原实现无论成败都标记，导致失败后永不重试。
+        if (!reapplySavedOverrides(context, prefs)) {
+            return false
+        }
         prefs.edit().putInt(KEY_CLEARED_BOOT_COUNT, bootCount).apply()
         orphanScrubDone = true
         return true
@@ -170,22 +174,37 @@ object CarrierConfigManager {
         }
     }
 
+    /**
+     * @return 是否至少成功回写了一个槽位。全部失败（如 subId 暂不可用、写入抛错）时返回 false，
+     *         调用方据此决定是否标记本开机周期为已处理，从而支持后续重试。
+     */
     private fun reapplySavedOverrides(
         context: Context,
         prefs: android.content.SharedPreferences
-    ) {
+    ): Boolean {
+        var anySuccess = false
+        var hadPending = false
         for (slotIndex in 0..1) {
             if (!prefs.getBoolean("slot_${slotIndex}_set", false)) {
                 continue
             }
-            val subId = getSubIdForSlotViaApi(context, slotIndex) ?: continue
+            val subId = getSubIdForSlotViaApi(context, slotIndex)
             val countryCode = prefs.getString("slot_${slotIndex}_cc", null)?.takeIf { it.isNotEmpty() }
             val carrierName = prefs.getString("slot_${slotIndex}_name", null)?.takeIf { it.isNotEmpty() }
             if (countryCode == null && carrierName == null) {
                 continue
             }
-            runCatching { setCarrierConfig(context, subId, countryCode, carrierName) }
+            hadPending = true
+            if (subId == null) {
+                // 槽位有保存的配置，但当前拿不到 subId（SIM 未就绪）→ 本轮视为失败
+                continue
+            }
+            val ok = runCatching { setCarrierConfig(context, subId, countryCode, carrierName) }.isSuccess
+            if (ok) anySuccess = true
         }
+        // 没有待回写的槽位（用户未保存过配置）也视为完成，避免无意义地反复重试；
+        // 有待回写槽位则必须至少一个成功才算完成。
+        return !hadPending || anySuccess
     }
 
     /**

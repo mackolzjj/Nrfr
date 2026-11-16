@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.github.nrfr.manager.CarrierConfigManager
+import com.github.nrfr.manager.RebootResync
 import com.github.nrfr.manager.ShizukuHelper
 import rikka.shizuku.Shizuku
 import java.util.concurrent.CountDownLatch
@@ -30,6 +31,8 @@ class BootCleanupReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         scheduleClearJob(appContext, delayMs = 5_000L)
         scheduleClearJob(appContext, delayMs = 60_000L, jobId = JOB_ID_RETRY)
+        // 兜底：Shizuku 延迟就绪 / job 被冻结时，靠闹钟在多个时间点重新拉起进程补写
+        RebootResync.scheduleBootAlarms(appContext)
     }
 
     companion object {

@@ -6,12 +6,15 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- 该权限同时保护 BOOT_COMPLETED 与 LOCKED_BOOT_COMPLETED 两个广播 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- 开机兜底闹钟穿透 Doze 用；无此权限时代码自动降级为非精确闹钟 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
 
     <instrumentation
             android:name="com.github.nrfr.manager.PrivilegedCarrierConfigInstrumentation"
             android:targetPackage="${applicationId}"/>
 
     <application
+            android:name=".NrfrApplication"
             android:allowBackup="true"
             android:dataExtractionRules="@xml/data_extraction_rules"
             android:fullBackupContent="@xml/backup_rules"
@@ -47,6 +50,14 @@
                 android:name=".receiver.BootRestoreJobService"
                 android:permission="android.permission.BIND_JOB_SERVICE"
                 android:exported="false"/>
+
+        <receiver
+                android:name=".receiver.ReapplyAlarmReceiver"
+                android:exported="false">
+            <intent-filter>
+                <action android:name="com.github.nrfr.action.REAPPLY_OVERRIDES"/>
+            </intent-filter>
+        </receiver>
 
         <provider
                 android:name="rikka.shizuku.ShizukuProvider"
