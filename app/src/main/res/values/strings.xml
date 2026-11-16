@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Nrfr</string>
+    <string name="one_tap_label">一键回写</string>
 </resources>

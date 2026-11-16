@@ -36,6 +36,20 @@
             </intent-filter>
         </activity>
 
+        <!-- 桌面「一键回写」快捷入口：点一下即自动拉起 Shizuku 并回写已保存的覆盖 -->
+        <activity
+                android:name=".OneTapActivity"
+                android:exported="true"
+                android:label="@string/one_tap_label"
+                android:theme="@style/Theme.Nrfr"
+                android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
         <receiver
                 android:name=".receiver.BootCleanupReceiver"
                 android:exported="false"

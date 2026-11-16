@@ -112,6 +112,34 @@ object CarrierConfigManager {
     }
 
     /**
+     * 一键回写：无条件重新应用已保存的覆盖，不受开机 bootCount 去重限制。
+     *
+     * 与 ensureClearedAfterReboot 的区别：
+     * - ensureClearedAfterReboot 同一开机周期只回写一次，用于开机自动链路；
+     * - 本方法供用户主动点击「一键回写」时调用，即使本周期已自动回写过，
+     *   也强制再写一次，用于对抗小米服务二次覆盖 / 用户手动还原后的补救。
+     *
+     * @return 是否至少成功回写了一个槽位（或没有待回写配置）。
+     */
+    fun forceReapplySavedOverrides(context: Context): Boolean {
+        if (!ShizukuHelper.hasPermission()) {
+            return false
+        }
+        val prefs = context.getSharedPreferences(PREFS_SESSION, Context.MODE_PRIVATE)
+        val ok = reapplySavedOverrides(context, prefs)
+        if (ok) {
+            runCatching { scrubOrphanBadges(context) }
+        }
+        return ok
+    }
+
+    /** 是否存在已保存、待回写的覆盖配置（用于一键界面提示用户先保存）。 */
+    fun hasSavedOverrides(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_SESSION, Context.MODE_PRIVATE)
+        return (0..1).any { prefs.getBoolean("slot_${it}_set", false) }
+    }
+
+    /**
      * 对全部 SIM 执行还原：清覆盖配置，并阻塞清除状态栏品牌/SPN 角标。
      */
     fun restoreAllToUnset(context: Context) {

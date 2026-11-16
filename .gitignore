@@ -26,3 +26,6 @@ nrfr-client/
 
 # 临时凭证文件，绝不提交
 .git_push_token.tmp
+
+# CI 下载产物，不入库
+build_artifact/
