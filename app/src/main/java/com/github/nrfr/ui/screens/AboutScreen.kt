@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import com.github.nrfr.R
 import com.github.nrfr.BuildConfig
 import com.github.nrfr.manager.AppUpdateManager
+import com.github.nrfr.manager.DiagnosticManager
 import com.github.nrfr.ui.HongguoStyleUpdateDialog
 import com.github.nrfr.ui.theme.NrfrAdaptive
 import com.github.nrfr.ui.theme.NrfrCardShape
@@ -78,6 +79,7 @@ fun AboutScreen(onBack: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
+    var isExportingDiagnostic by remember { mutableStateOf(false) }
 
     fun openUrl(url: String) {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -245,6 +247,45 @@ fun AboutScreen(onBack: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 10.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Button(
+                onClick = {
+                    if (isExportingDiagnostic) return@Button
+                    isExportingDiagnostic = true
+                    coroutineScope.launch {
+                        try {
+                            val shareIntent = withContext(Dispatchers.IO) {
+                                DiagnosticManager.buildShareIntent(context)
+                            }
+                            context.startActivity(shareIntent)
+                        } catch (error: Exception) {
+                            updateMessage = "导出诊断失败：${error.message ?: "未知错误"}".take(160)
+                        } finally {
+                            isExportingDiagnostic = false
+                        }
+                    }
+                },
+                enabled = !isExportingDiagnostic,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp),
+                shape = NrfrPill,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    disabledContainerColor = MaterialTheme.colorScheme.outline,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp)
+            ) {
+                Text(
+                    if (isExportingDiagnostic) "正在生成…" else "导出诊断报告（反馈适配问题）",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                 )
             }
 

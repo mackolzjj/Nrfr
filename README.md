@@ -2,6 +2,20 @@
 
 免 Root 的 SIM 卡运营商配置覆盖工具，面向 Android 16/17，单 APK 安装。
 
+## 本地适配分支（小米 HyperOS 4 / 非 OPPO 机型）
+
+> 这是基于上游 master 的本地改造分支，仅做通用兼容性与可诊断性增强，未引入任何未经验证的厂商私有接口。
+
+- **读取层多格式兼容**：`dumpsys carrier_config` 的 `phoneId` 行与 `dumpsys isub` 的 `slot/subId` 行改为宽松正则，兼容 AOSP/OPPO 之外的输出格式（如小米/MTK）。
+- **subId 公开 API 兜底**：dumpsys 解析失败时，依次用 `getActiveSubscriptionInfoForSimSlotIndex`、`getActiveSubscriptionInfoList`、隐藏 `getSubId`/`getSubscriptionIds` 取 subId。
+- **SPN 晚重试**：保存配置后 9s/18s 各核对并刷新一次运营商角标，对抗厂商 Telephony 服务的延迟二次覆盖。
+- **开机回写增强**：同时监听 `BOOT_COMPLETED` 与 `LOCKED_BOOT_COMPLETED`。
+- **诊断报告导出**：「关于」页新增按钮，一键导出设备信息、已解析 SIM、以及 `dumpsys isub` / `carrier_config` / `telephony.registry` 原始输出，便于反馈适配问题。
+
+### 反馈适配问题
+
+在「关于」页点「导出诊断报告」，把生成的文件附到 Issue 中。原项目 Issue：https://github.com/lmh-codes/Nrfr/issues
+
 ## 主要特性
 
 - **单 APK**：下载安装即可使用

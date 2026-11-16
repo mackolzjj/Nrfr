@@ -14,7 +14,17 @@ import rikka.shizuku.Shizuku
 import java.io.InputStream
 
 object CarrierConfigManager {
-    private val PHONE_ID_PATTERN = Regex("""^Phone Id = (\d+)""")
+    /**
+     * 不同厂商 dumpsys carrier_config 的 phoneId 行格式不同：
+     * AOSP/OPPO 常见 "Phone Id = 0"，MTK/小米部分机型是 "phoneId=0" 或 "phoneId: 0"。
+     * 这里统一转成宽松匹配，避免换机型后整份解析失效。
+     */
+    private val PHONE_ID_PATTERN = Regex("""(?i)^[\s>]*phone[ _]?id\s*[=:]\s*(\d+)""")
+    private val LOGICAL_SLOT_PATTERNS = listOf(
+        Regex("""(?i)logical\s+sim\s+slot\s+(\d+)\s*[:=]\s*subId\s*[:=]\s*(\d+)"""),
+        Regex("""(?i)slot\s*[:=]\s*(\d+)[,\s]+subId\s*[:=]\s*(\d+)"""),
+        Regex("""(?i)phoneId\s*[:=]\s*(\d+)[,\s]+subId\s*[:=]\s*(\d+)""")
+    )
     private const val PREFS_SESSION = "nrfr_session"
     private const val KEY_CLEARED_BOOT_COUNT = "cleared_boot_count"
 
@@ -215,8 +225,6 @@ object CarrierConfigManager {
         val subIdToCarrierName: Map<Int, String>
     )
 
-    private val LOGICAL_SLOT_PATTERN = Regex("""Logical SIM slot (\d+): subId=(\d+)""")
-
     fun setCarrierConfig(
         context: Context,
         subId: Int,
@@ -383,10 +391,12 @@ object CarrierConfigManager {
 
     private fun parseDumpsysIsub(output: String): IsubSnapshot {
         val slotToSubId = mutableMapOf<Int, Int>()
-        LOGICAL_SLOT_PATTERN.findAll(output).forEach { match ->
-            val slot = match.groupValues[1].toIntOrNull() ?: return@forEach
-            val subId = match.groupValues[2].toIntOrNull() ?: return@forEach
-            slotToSubId[slot] = subId
+        LOGICAL_SLOT_PATTERNS.forEach { pattern ->
+            pattern.findAll(output).forEach { match ->
+                val slot = match.groupValues[1].toIntOrNull() ?: return@forEach
+                val subId = match.groupValues[2].toIntOrNull() ?: return@forEach
+                slotToSubId.putIfAbsent(slot, subId)
+            }
         }
 
         val subIdToCarrierName = mutableMapOf<Int, String>()
@@ -423,20 +433,54 @@ object CarrierConfigManager {
         return IsubSnapshot(slotToSubId, subIdToCarrierName)
     }
 
+    /**
+     * 取槽位对应的 subId。按可靠性从高到低依次尝试：
+     * 1. 公开 API getActiveSubscriptionInfoForSimSlotIndex
+     * 2. 公开 API getActiveSubscriptionInfoList + simSlotIndex 匹配
+     * 3. 隐藏静态 API SubscriptionManager.getSubId
+     * 4. 隐藏 API getSubscriptionIds（部分新平台改名）
+     * 小米/HyperOS 上 dumpsys 解析可能失败，这条公开 API 链路是主要兜底。
+     */
     private fun getSubIdForSlotViaApi(context: Context, slotIndex: Int): Int? {
         val manager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
             ?: return null
-        return runCatching {
+        val invalid = SubscriptionManager.INVALID_SUBSCRIPTION_ID
+
+        // 1) 公开 API：按槽位直接取
+        runCatching {
             manager.getActiveSubscriptionInfoForSimSlotIndex(slotIndex)?.subscriptionId
-                ?.takeIf { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
-        }.getOrNull() ?: runCatching {
-            val getSubId = SubscriptionManager::class.java.getDeclaredMethod(
+                ?.takeIf { it != invalid }
+        }.getOrNull()?.let { return it }
+
+        // 2) 公开 API：遍历活跃订阅，按 simSlotIndex 匹配
+        runCatching {
+            manager.activeSubscriptionInfoList
+                ?.firstOrNull { it.simSlotIndex == slotIndex }
+                ?.subscriptionId
+                ?.takeIf { it != invalid }
+        }.getOrNull()?.let { return it }
+
+        // 3) 隐藏静态 API：getSubId(int)
+        runCatching {
+            val method = SubscriptionManager::class.java.getDeclaredMethod(
                 "getSubId",
                 Int::class.javaPrimitiveType
             )
-            val subIds = getSubId.invoke(null, slotIndex) as? IntArray ?: return null
-            subIds.firstOrNull { it != SubscriptionManager.INVALID_SUBSCRIPTION_ID }
-        }.getOrNull()
+            val subIds = method.invoke(null, slotIndex) as? IntArray ?: return@runCatching null
+            subIds.firstOrNull { it != invalid }
+        }.getOrNull()?.let { return it }
+
+        // 4) 隐藏静态 API：getSubscriptionIds(int)（新平台改名）
+        runCatching {
+            val method = SubscriptionManager::class.java.getDeclaredMethod(
+                "getSubscriptionIds",
+                Int::class.javaPrimitiveType
+            )
+            val subIds = method.invoke(null, slotIndex) as? IntArray ?: return@runCatching null
+            subIds.firstOrNull { it != invalid }
+        }.getOrNull()?.let { return it }
+
+        return null
     }
 
     private fun getCurrentConfigByLoader(context: Context, subId: Int): Map<String, String>? {
@@ -650,6 +694,18 @@ object CarrierConfigManager {
                 output.append(reader.readText())
             }
         }.apply { start() }
+    }
+
+    /** 供诊断导出使用：以 shell 权限执行只读 dumpsys 命令，失败时返回错误文本而非抛异常。 */
+    internal fun captureShellForDiagnostics(command: String): String {
+        if (!ShizukuHelper.hasPermission()) {
+            return "<未授权 Shizuku，无法执行: $command>"
+        }
+        return try {
+            runShellCommand(command)
+        } catch (e: Throwable) {
+            "<执行失败: ${TelephonyHiddenApi.unwrapCause(e).message ?: e.javaClass.simpleName}>"
+        }
     }
 
     data class CarrierConfigOperationResult(

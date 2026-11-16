@@ -20,9 +20,13 @@ import java.util.concurrent.TimeUnit
  */
 class BootCleanupReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) {
+        val action = intent?.action
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != Intent.ACTION_LOCKED_BOOT_COMPLETED
+        ) {
             return
         }
+        // 两个广播都可能到达；用 setAndPersist 覆盖同 id 的 job，避免重复回写。
         val appContext = context.applicationContext
         scheduleClearJob(appContext, delayMs = 5_000L)
         scheduleClearJob(appContext, delayMs = 60_000L, jobId = JOB_ID_RETRY)
@@ -68,7 +72,7 @@ class BootCleanupReceiver : BroadcastReceiver() {
                 .setRequiresDeviceIdle(false)
                 .build()
             scheduler.schedule(job)
-            Log.i(TAG, "scheduled boot clear job id=$jobId delay=$delayMs")
+            Log.i(TAG, "scheduled boot restore job id=$jobId delay=$delayMs")
         }
     }
 }

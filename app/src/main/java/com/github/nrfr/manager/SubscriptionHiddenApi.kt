@@ -24,11 +24,51 @@ internal object SubscriptionHiddenApi {
     private const val OPLUS_TELEPHONY_INTERNAL = "com.android.internal.telephony.IOplusTelephonyInternalExt"
     private const val ISUB_EXT = "com.oplus.telephony.ISubExt"
     private val RETRY_DELAYS_MS = longArrayOf(0L, 400L, 1200L, 2500L, 5000L)
+    // 晚重试：针对小米 MiuiTelephonyService 等厂商服务在 SIM 状态变化后二次覆盖 SPN 的情况。
+    // 分两次在 ~9s / ~18s 再刷一次，覆盖厂商服务的延迟回写窗口。
+    private val LATE_RETRY_DELAYS_MS = longArrayOf(9_000L, 18_000L)
     private val syncShellIdentity = ThreadLocal.withInitial { false }
 
     fun syncAfterOverride(context: Context, subId: Int, bundle: PersistableBundle?) {
         val carrierName = bundle?.let { readOverrideCarrierName(it) }
         scheduleSync(context, subId, carrierName, blocking = false, useShellIdentity = false)
+        // 小米等厂商服务可能延迟二次覆盖 SPN，安排晚重试兜底。
+        if (carrierName != null) {
+            scheduleLateRecheck(context.applicationContext, subId, carrierName)
+        }
+    }
+
+    /**
+     * 晚重试兜底：保存配置后延迟若干秒再次核对并刷新 SPN。
+     * 仅针对有 carrierName 的覆盖，在后台线程执行，不阻塞调用方。
+     */
+    private fun scheduleLateRecheck(context: Context, subId: Int, carrierName: String) {
+        Thread({
+            LATE_RETRY_DELAYS_MS.forEach { delayMs ->
+                try {
+                    Thread.sleep(delayMs)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return@Thread
+                }
+                // 已一致则不必再刷，避免无谓改动触发厂商服务再次覆盖
+                if (verifyCarrierName(subId, carrierName) || verifyOperatorBrand(subId, carrierName)) {
+                    Log.i(TAG, "late recheck: already synced subId=$subId after ${delayMs}ms")
+                    return@Thread
+                }
+                syncShellIdentity.set(false)
+                try {
+                    runCatching { notifyConfigChangedForSubId(subId) }
+                    runCatching { setCarrierName(context, subId, carrierName) }
+                    Log.i(TAG, "late recheck reapplied subId=$subId after ${delayMs}ms name=$carrierName")
+                } finally {
+                    syncShellIdentity.remove()
+                }
+            }
+        }, "NrfrLateSpnRecheck-$subId").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     fun syncAfterRestore(context: Context, subId: Int) {
