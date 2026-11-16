@@ -23,3 +23,6 @@ nrfr-client/
 *.jar
 *.mp4
 !gradle/wrapper/gradle-wrapper.jar
+
+# 临时凭证文件，绝不提交
+.git_push_token.tmp
