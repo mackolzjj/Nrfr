@@ -49,16 +49,16 @@ jobs:
           bash -n gradlew && echo "gradlew syntax OK"
 
       # 该项目的 gradlew 在 JAVA_HOME 存在时未给 JAVA_CMD 赋值（脚本缺陷），此处显式指定
-      # debug 构建用 AGP 默认 debug keystore 自动签名，产出可直接安装的 APK
-      - name: Build Debug APK
+      # 正式签名 release 构建：证书来自仓库内 release-keystore.p12（PKCS12）
+      - name: Build Signed Release APK
         run: |
           export JAVA_CMD="$JAVA_HOME/bin/java"
           "$JAVA_CMD" -version
-          bash gradlew assembleDebug --no-daemon --stacktrace
+          bash gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Upload Debug APK
+      - name: Upload Signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: nrfr-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: nrfr-release-signed-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
